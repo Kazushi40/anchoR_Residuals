@@ -1,0 +1,126 @@
+---
+title: "Anchor Residuals"
+output:
+  html_document:
+    df_print: paged
+    toc: yes
+---
+Here we demonstrate how to calculate rediduals for an anchor screen.
+
+# Setup
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(messagae = FALSE, warning = FALSE)
+```
+
+First we check for installation of packages that we will need for the analysis.
+```{r}
+list.of.packages <- c("ggplot2", "dplyr", "here", "readr", 'mgcv', 'splines', 
+                      'purrr', 'ggrepel')
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+library(here)
+library(dplyr)
+library(readr)
+library(tidyr)
+library(ggplot2)
+```
+
+# Load Data
+To calculate residuals need guide-level log-fold changes, a mapping between guides and genes, and a reference for pairs of control arms and treatments. 
+```{r}
+output_file_root <- 'example'
+guide_lfcs <- read_csv(here('guide_lfcs.csv')) # 'here' sets the root to the project's directory
+head(guide_lfcs)
+guide_gene_mapping <- read_csv(here('guide_gene_mapping.csv'))
+head(guide_gene_mapping)
+reference_arms <- read_csv(here('reference_arms.csv'))
+head(reference_arms)
+```
+
+# Calculating Residuals
+We merge our dataframes  
+```{r}
+tidy_lfcs <- guide_lfcs %>%
+  gather(treatment, Avg.LFC, -`Construct Barcode`) # Make data columnar
+reference_treatment_lfcs <- tidy_lfcs %>%
+  inner_join(reference_arms, by = c('treatment' = 'Reference')) %>%
+  rename(reference = treatment, treatment = Perturbed) %>%
+  inner_join(tidy_lfcs, by = c('treatment','Construct Barcode'), 
+             suffix = c('.reference', ''))
+head(reference_treatment_lfcs)
+```
+And then calculate the residuals for each construct in each treatment.
+```{r}
+guide_residuals <- reference_treatment_lfcs %>%
+  group_by(treatment) %>%
+  mutate(residual = mgcv::gam(Avg.LFC ~ splines::ns(Avg.LFC.reference, df = 3))$residual)
+```
+
+As an example, we can visualize the residuals for the first condition.
+```{r}
+random_treatment <- sample(guide_residuals$treatment, 1)
+ggplot(guide_residuals %>% filter(treatment == random_treatment)) +
+  aes(x = Avg.LFC.reference, y = Avg.LFC, color = residual) +
+  geom_point(alpha = 0.3) +
+  theme_classic() +
+  theme(aspect.ratio = 1, text = element_text(size = 12), 
+        plot.title = element_text(size = 12)) +
+  scale_color_gradient2(low = 'red', mid = 'white', high = 'blue') +
+  ggtitle(random_treatment)
+```
+
+# Aggregating Residuals 
+Here we use the mapping file to aggreagate residuals at the gene level. We Z-score residuals to determine significance levels. 
+```{r}
+guide_residuals_mapped <- guide_residuals %>%
+  inner_join(guide_gene_mapping)
+population_stats = guide_residuals_mapped %>% # Stats to be used for z-scoring
+  group_by(treatment) %>%
+  summarise(pop_mean = mean(residual), 
+            pop_sd = sd(residual))
+gene_residuals = guide_residuals_mapped %>%
+  group_by(treatment) %>%
+  nest() %>% # now each treatment is its own nested dataframe
+  inner_join(population_stats) %>%
+  mutate(gene_residuals = purrr::pmap(list(data, pop_mean, pop_sd), function(df, m, s) {
+           df %>%
+             group_by(`Gene Symbol`) %>%
+             summarise(Avg.Residual = mean(residual),
+                       Avg.LFC = mean(Avg.LFC),
+                       n_guides = length(residual),
+                       z = (Avg.Residual - m)/(s/sqrt(n_guides)), 
+                       p.value = 2*pnorm(-abs(z)), 
+                       nlog_p = -log10(p.value))
+         })) %>%
+  unnest(gene_residuals, .drop = TRUE) %>%
+  mutate(control = grepl('_', `Gene Symbol`)) # We assume controls have an underscore in their gene name
+head(gene_residuals)
+```
+
+We can visualize the gene-level residuals for the first treatment condition
+```{r}
+treatment_data <- gene_residuals %>%
+  filter(treatment == random_treatment)
+  
+ggplot(treatment_data %>% arrange(control) ) +
+    aes(x = Avg.Residual, y = nlog_p, label = `Gene Symbol`, 
+        color = control) +
+    scale_color_manual(values = c('black', 'grey')) +
+    geom_point() +
+    geom_rug() +
+    theme_classic() +
+    theme(aspect.ratio = 1, text = element_text(size = 12), 
+          plot.title = element_text(size = 12)) +
+    ggrepel::geom_label_repel(data = treatment_data %>% top_n(5, nlog_p), 
+                     label.padding = 0.1, size = 2.5,  
+                     color = 'blue') +
+    ggtitle(paste(random_treatment, 'Genes'))
+```
+
+# Save Data
+```{r}
+write_csv(guide_residuals_mapped,here(paste(output_file_root, 'guide_residuals.csv', sep = '_')))
+write_csv(gene_residuals,here(paste(output_file_root, 'gene_residuals.csv', sep = '_')))
+```
+

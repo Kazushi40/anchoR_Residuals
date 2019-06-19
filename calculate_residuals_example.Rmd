@@ -9,32 +9,24 @@ Here we demonstrate how to calculate rediduals for an anchor screen.
 
 # Setup
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(messagae = FALSE, warning = FALSE)
-```
-
 First we check for installation of packages that we will need for the analysis.
 ```{r}
-list.of.packages <- c("ggplot2", "dplyr", "here", "readr", 'mgcv', 'splines', 
-                      'purrr', 'ggrepel')
+list.of.packages <- c('tidyverse',  'here', 'mgcv', 'splines', 'ggrepel')
 new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
 if(length(new.packages)) install.packages(new.packages)
-library(here)
-library(dplyr)
-library(readr)
-library(tidyr)
-library(ggplot2)
+library(here)  # 'here' sets the root directory to match with the project
+library(tidyverse)
 ```
 
 # Load Data
 To calculate residuals need guide-level log-fold changes, a mapping between guides and genes, and a reference for pairs of control arms and treatments. 
 ```{r}
-output_file_root <- 'example'
-guide_lfcs <- read_csv(here('guide_lfcs.csv')) # 'here' sets the root to the project's directory
+output_root_filename <- 'example'
+guide_lfcs <- read_csv(here('data','A375_023_AACY04_lfcs.csv'))
 head(guide_lfcs)
-guide_gene_mapping <- read_csv(here('guide_gene_mapping.csv'))
+guide_gene_mapping <- read_csv(here('data','A375_023_AACY04_mapping.csv'))
 head(guide_gene_mapping)
-reference_arms <- read_csv(here('reference_arms.csv'))
+reference_arms <- read_csv(here('data','A375_023_AACY04_reference.csv'))
 head(reference_arms)
 ```
 
@@ -120,7 +112,7 @@ ggplot(treatment_data %>% arrange(control) ) +
 
 # Save Data
 ```{r}
-write_csv(guide_residuals_mapped,here(paste(output_file_root, 'guide_residuals.csv', sep = '_')))
-write_csv(gene_residuals,here(paste(output_file_root, 'gene_residuals.csv', sep = '_')))
+write_csv(guide_residuals_mapped,here('data', paste(output_root_filename, 'guide_residuals.csv', sep = '_')))
+write_csv(gene_residuals,here('data',paste(output_root_filename, 'gene_residuals.csv', sep = '_')))
 ```
 
